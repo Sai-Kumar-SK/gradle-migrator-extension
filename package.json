@@ -1,0 +1,241 @@
+{
+  "name": "gradle-migrator",
+  "displayName": "Gradle Migrator",
+  "description": "Automate Gradle project migration with AI-powered agent mode, Git integration, and intelligent file processing.",
+  "version": "0.2.0",
+  "publisher": "gradle-migrator-team",
+  "author": {
+    "name": "Gradle Migrator Contributors"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/gradle-migrator-extension.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/gradle-migrator-extension/issues"
+  },
+  "homepage": "https://github.com/your-username/gradle-migrator-extension#readme",
+  "keywords": [
+    "gradle",
+    "migration",
+    "build-tools",
+    "automation",
+    "git",
+    "copilot",
+    "ai",
+    "agent",
+    "java",
+    "kotlin"
+  ],
+  "categories": [
+    "Other",
+    "Programming Languages",
+    "Snippets"
+  ],
+  "engines": { "vscode": "^1.99.0" },
+  "main": "./out/extension.js",
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -w -p ./",
+    "test": "mocha -r ts-node/register --project tsconfig.test.json test/**/*.spec.ts --timeout 5000",
+    "test:unit": "mocha -r ts-node/register --project tsconfig.test.json test/unit/**/*.spec.ts --timeout 5000",
+    "test:integration": "mocha -r ts-node/register --project tsconfig.test.json test/integration/**/*.spec.ts --timeout 10000",
+    "lint": "eslint ./src --ext .ts",
+    "lint:fix": "eslint ./src --ext .ts --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
+    "package": "vsce package",
+    "prepublish": "npm run compile",
+    "clean": "rimraf out dist *.vsix",
+    "docs:build": "echo \"Documentation build not implemented\"",
+    "docs:serve": "echo \"Documentation serve not implemented\""
+  },
+  "dependencies": {
+    "fs-extra": "^11.1.1",
+    "glob": "^8.1.0",
+    "simple-git": "^3.28.0"
+  },
+  "devDependencies": {
+    "@types/chai": "^4.3.0",
+    "@types/fs-extra": "^11.0.1",
+    "@types/glob": "^8.1.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.99.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "@vscode/vsce": "^2.19.0",
+    "chai": "^4.3.7",
+    "eslint": "^8.44.0",
+    "mocha": "^11.7.0",
+    "prettier": "^3.0.0",
+    "rimraf": "^5.0.0",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.2.2"
+  },
+  "activationEvents": [
+    "onCommand:gradleMigrator.migrate",
+    "onCommand:gradleMigrator.registerTool"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "gradleMigrator.migrate",
+        "title": "Migrate Gradle Repository URLs",
+        "category": "Gradle Migrator"
+      },
+      {
+        "command": "gradleMigrator.registerTool",
+        "title": "Gradle Migrator: Register LM Tool"
+      },
+      {
+        "command": "gradleMigrator.runBenchmark",
+        "title": "Run Performance Benchmark",
+        "category": "Gradle Migrator"
+      },
+      {
+        "command": "gradleMigrator.runScalabilityAnalysis",
+        "title": "Run Scalability Analysis",
+        "category": "Gradle Migrator"
+      },
+      {
+        "command": "gradleMigrator.configurePerformance",
+        "title": "Configure Performance Settings",
+        "category": "Gradle Migrator"
+      }
+    ],
+    "configuration": {
+      "title": "Gradle Migrator",
+      "properties": {
+        "gradleMigrator.performanceOptions": {
+          "type": "object",
+          "description": "Performance optimization options for Gradle migration",
+          "properties": {
+            "enableCaching": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable file and result caching"
+            },
+            "maxParallelJobs": {
+              "type": "number",
+              "default": 4,
+              "minimum": 1,
+              "maximum": 16,
+              "description": "Maximum number of parallel processing jobs"
+            },
+            "chunkSize": {
+              "type": "number",
+              "default": 50,
+              "minimum": 1,
+              "maximum": 1000,
+              "description": "Number of files to process in each batch"
+            },
+            "memoryLimit": {
+              "type": "number",
+              "default": 512,
+              "minimum": 64,
+              "maximum": 8192,
+              "description": "Memory limit in MB"
+            },
+            "useStreaming": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable streaming for large files"
+            },
+            "enableWorkerThreads": {
+              "type": "boolean",
+              "default": false,
+              "description": "Use worker threads for CPU-intensive operations"
+            }
+          }
+        }
+      }
+    },
+    "languageModelTools": [
+      {
+        "name": "gradle-migrator",
+        "displayName": "Gradle Migrator",
+        "modelDescription": "Enumerate Gradle files, stream file chunks, accept suggested edits and commit changes to Gradle projects.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "listFiles",
+                "readChunk",
+                "updateFiles",
+                "commitChanges",
+                "processWithCopilot",
+                "validateFiles",
+                "getRepoStatus",
+                "analyzeProject"
+              ],
+              "description": "The action to perform"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "repoPath": {
+                  "type": "string",
+                  "description": "Path to the repository"
+                },
+                "filePath": {
+                  "type": "string",
+                  "description": "Path to a specific file"
+                },
+                "repositoryUrl": {
+                  "type": "string",
+                  "description": "New repository URL for migration"
+                },
+                "startLine": {
+                  "type": "number",
+                  "description": "Starting line number for file chunk reading"
+                },
+                "endLine": {
+                  "type": "number",
+                  "description": "Ending line number for file chunk reading"
+                },
+                "maxTokens": {
+                  "type": "number",
+                  "description": "Maximum tokens per file for processing"
+                },
+                "batchSize": {
+                  "type": "number",
+                  "description": "Number of files to process in each batch"
+                },
+                "createBackup": {
+                  "type": "boolean",
+                  "description": "Whether to create backup files before modification"
+                },
+                "dryRun": {
+                  "type": "boolean",
+                  "description": "Whether to perform a dry run without actual changes"
+                },
+                "message": {
+                  "type": "string",
+                  "description": "Commit message for changes"
+                },
+                "push": {
+                  "type": "boolean",
+                  "description": "Whether to push changes after commit"
+                },
+                "fileTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "File types to validate or process"
+                }
+              }
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      }
+    ]
+  }
+}
