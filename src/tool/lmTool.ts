@@ -525,10 +525,23 @@ class GradleMigratorTool implements vscode.LanguageModelTool<any> {
         // Step 4: Validate existing Gradle files
         const validationResult = await validateGradleFiles(files);
         
-        // Step 5: Update gradle.properties files
+        // Step 5: Process all Gradle files with Copilot integration
+        const copilotResult = await processGradleFilesWithCopilot(
+          repoPath,
+          new Map<string, string>(), // urlMappings
+          (progress: number, message: string) => {
+            console.log(`Migration progress: ${progress}% - ${message}`);
+          },
+          {
+            enableCaching: true,
+            maxParallelJobs: 2
+          }
+        );
+        
+        // Step 6: Update gradle.properties files
         const updateResult = await updateGradlePropertiesFiles(repoPath, undefined, { createBackup: true });
         
-        // Step 6: Replace templates
+        // Step 7: Replace templates
         const templateResult = await replaceRootTemplates(
           repoPath,
           {
@@ -539,13 +552,52 @@ class GradleMigratorTool implements vscode.LanguageModelTool<any> {
           }
         );
         
-        // Step 7: Commit changes
+        // Step 8: Execute Gradle build to validate changes
+        let buildResult: any = { success: true, message: 'Build validation skipped' };
+        try {
+          const { spawn } = require('child_process');
+          const gradleBuild = spawn('gradle', ['build', '--no-daemon'], {
+            cwd: repoPath,
+            stdio: 'pipe'
+          });
+          
+          let buildOutput = '';
+          let buildError = '';
+          
+          gradleBuild.stdout.on('data', (data: Buffer) => {
+            buildOutput += data.toString();
+          });
+          
+          gradleBuild.stderr.on('data', (data: Buffer) => {
+            buildError += data.toString();
+          });
+          
+          await new Promise((resolve, reject) => {
+            gradleBuild.on('close', (code: number) => {
+              if (code === 0) {
+                buildResult = { success: true, message: 'Build completed successfully', output: buildOutput };
+              } else {
+                buildResult = { success: false, message: `Build failed with code ${code}`, error: buildError, output: buildOutput };
+              }
+              resolve(buildResult);
+            });
+            
+            gradleBuild.on('error', (error: Error) => {
+              buildResult = { success: false, message: `Build execution failed: ${error.message}` };
+              resolve(buildResult);
+            });
+          });
+        } catch (buildError: any) {
+          buildResult = { success: false, message: `Build validation error: ${buildError.message}` };
+        }
+        
+        // Step 9: Commit changes
         const commitResult = await addAllAndCommit(git, commitMessage);
         if (!commitResult.success) {
           throw new Error(`Failed to commit changes: ${commitResult.message}`);
         }
         
-        // Step 8: Push changes
+        // Step 10: Push changes
         const pushResult = await pushBranch(git, branchName, { setUpstream: true });
         
         const duration = Date.now() - startTime;
@@ -557,28 +609,41 @@ class GradleMigratorTool implements vscode.LanguageModelTool<any> {
           repository: gitUrl,
           branch: branchName,
           filesProcessed: files.length,
+          copilotProcessed: copilotResult.filesProcessed || 0,
           operations: {
             clone: 'success',
             branch: branchResult.success ? 'success' : 'warning',
             analysis: `Found ${files.length} Gradle files`,
             validation: validationResult.success ? 'success' : 'warning',
+            copilotProcessing: copilotResult.success ? 'success' : 'warning',
             update: updateResult.success ? 'success' : 'warning',
             templates: templateResult.success ? 'success' : 'warning',
+            build: buildResult.success ? 'success' : 'warning',
             commit: commitResult.success ? 'success' : 'warning',
             push: pushResult.success ? 'success' : 'warning'
           },
           warnings: [] as string[],
-          nextSteps: [] as string[]
+          nextSteps: [] as string[],
+          buildOutput: buildResult.success ? buildResult.output : buildResult.error
         };
         
         // Collect warnings
         if (!branchResult.success) result.warnings.push(`Branch creation: ${branchResult.message}`);
+        if (!copilotResult.success) result.warnings.push(`Copilot processing: ${copilotResult.message}`);
         if (!updateResult.success) result.warnings.push(`Properties update: ${updateResult.message}`);
         if (!templateResult.success) result.warnings.push(`Template replacement: ${templateResult.message}`);
+        if (!buildResult.success) result.warnings.push(`Build validation: ${buildResult.message}`);
         if (!commitResult.success) result.warnings.push(`Commit: ${commitResult.message}`);
         if (!pushResult.success) result.warnings.push(`Push: ${pushResult.message}`);
         
         // Add next steps
+        if (buildResult.success) {
+          result.nextSteps.push('✅ Build validation passed - your project is ready!');
+        } else {
+          result.nextSteps.push('❌ Review build errors and fix any remaining issues');
+          result.nextSteps.push('Run `./gradlew build --info` for detailed error information');
+        }
+        
         if (pushResult.success) {
           result.nextSteps.push(`Create pull request for branch '${branchName}'`);
           result.nextSteps.push('Review changes and merge when ready');
@@ -592,10 +657,13 @@ class GradleMigratorTool implements vscode.LanguageModelTool<any> {
             `**Repository**: ${gitUrl}\n` +
             `**Branch**: ${branchName}\n` +
             `**Duration**: ${duration}ms\n` +
-            `**Files Processed**: ${files.length}\n\n` +
+            `**Files Processed**: ${files.length}\n` +
+            `**Copilot Processed**: ${result.copilotProcessed}\n` +
+            `**Build Status**: ${buildResult.success ? '✅ Passed' : '❌ Failed'}\n\n` +
             `**Operations Status**:\n` +
             Object.entries(result.operations).map(([op, status]) => `- ${op}: ${status}`).join('\n') +
             (result.warnings.length > 0 ? `\n\n**Warnings**:\n${result.warnings.map(w => `- ${w}`).join('\n')}` : '') +
+            (!buildResult.success ? `\n\n**Build Output**:\n\`\`\`\n${result.buildOutput}\n\`\`\`` : '') +
             `\n\n**Next Steps**:\n${result.nextSteps.map(s => `- ${s}`).join('\n')}`)
         ]);
         

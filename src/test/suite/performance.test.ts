@@ -4,9 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { performance } from 'perf_hooks';
-import { findGradleFiles, updateGradlePropertiesFiles, processGradleFilesWithCopilot } from '../../migrator/gradleFiles';
-import { getRepoStatus } from '../../migrator/gitHelpers';
-import { runMigrationInteractive } from '../../migrator/runner';
+import { findGradleFiles, updateGradlePropertiesFiles } from '../../migrator/gradleFiles';
 
 interface PerformanceMetrics {
     duration: number;
@@ -15,14 +13,14 @@ interface PerformanceMetrics {
     operationType: string;
 }
 
-suite('Performance Tests', () => {
+describe('Performance Tests', () => {
     let testContext: {
         tempDir: string;
         largeRepoDir: string;
         metrics: PerformanceMetrics[];
     };
 
-    suiteSetup(async () => {
+    before(async () => {
         testContext = {
             tempDir: fs.mkdtempSync(path.join(os.tmpdir(), 'gradle-migrator-perf-')),
             largeRepoDir: '',
@@ -34,7 +32,7 @@ suite('Performance Tests', () => {
         await createLargeTestRepository(testContext.largeRepoDir);
     });
 
-    suiteTeardown(async () => {
+    after(async () => {
         if (testContext.tempDir && fs.existsSync(testContext.tempDir)) {
             fs.rmSync(testContext.tempDir, { recursive: true, force: true });
         }
@@ -179,7 +177,7 @@ pipeline {
         `);
     }
 
-    test('Large repository file discovery performance', async () => {
+    it('Large repository file discovery performance', async () => {
         const result = await measurePerformance(
             async () => {
                 return await findGradleFiles(testContext.largeRepoDir);
@@ -197,7 +195,7 @@ pipeline {
         assert.ok(lastMetric.memoryUsage.heapUsed < 100 * 1024 * 1024, 'Memory usage should be under 100MB');
     });
 
-    test('Bulk gradle.properties update performance', async () => {
+    it('Bulk gradle.properties update performance', async () => {
         const urlMappings = new Map([
             ['https://old-repo.example.com/maven', 'https://new-repo.example.com/maven'],
             ['https://old-repo.example.com/artifactory', 'https://new-repo.example.com/artifactory']
@@ -207,8 +205,9 @@ pipeline {
             async () => {
                 return await updateGradlePropertiesFiles(
                     testContext.largeRepoDir,
-                    urlMappings,
+                    undefined,
                     {
+                        customMapping: { from: 'old-repo.example.com', to: 'new-repo.example.com' },
                         createBackup: true,
                         dryRun: false,
                         validateSyntax: true
@@ -228,7 +227,7 @@ pipeline {
         assert.ok(lastMetric.memoryUsage.heapUsed < 200 * 1024 * 1024, 'Memory usage should be under 200MB');
     });
 
-    test('Memory usage during chunked file processing', async () => {
+    it('Memory usage during chunked file processing', async () => {
         // Create a very large file to test chunked processing
         const largeFilePath = path.join(testContext.tempDir, 'large-gradle.properties');
         const largeContent = Array.from({ length: 10000 }, (_, i) => 
@@ -247,8 +246,9 @@ pipeline {
                 
                 return await updateGradlePropertiesFiles(
                     path.dirname(largeFilePath),
-                    urlMappings,
+                    undefined,
                     {
+                        customMapping: { from: 'old-repo.example.com', to: 'new-repo.example.com' },
                         createBackup: true,
                         dryRun: false,
                         validateSyntax: false // Skip validation for performance
@@ -266,7 +266,7 @@ pipeline {
         assert.ok(memoryIncrease < 50 * 1024 * 1024, 'Memory increase should be under 50MB for large file');
     });
 
-    test('Concurrent operation performance', async () => {
+    it('Concurrent operation performance', async () => {
         // Test multiple operations running concurrently
         const operations = Array.from({ length: 5 }, (_, i) => {
             const moduleDir = path.join(testContext.largeRepoDir, `module-${i}`);
@@ -291,7 +291,7 @@ pipeline {
         assert.ok(avgDuration < 1000, 'Average concurrent operation should complete within 1 second');
     });
 
-    test('Scalability with increasing file count', async () => {
+    it('Scalability with increasing file count', async () => {
         const fileCounts = [10, 50, 100, 200];
         const durations: number[] = [];
         
@@ -335,7 +335,7 @@ pipeline {
         }
     });
 
-    test('Resource cleanup and memory leaks', async () => {
+    it('Resource cleanup and memory leaks', async () => {
         const initialMemory = process.memoryUsage();
         
         // Perform multiple operations that could potentially leak memory

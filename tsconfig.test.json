@@ -5,7 +5,8 @@
         "rootDir": ".",
         "types": [
             "node",
-            "jest"
+            "mocha",
+            "chai"
         ]
     },
     "include": [

@@ -118,8 +118,129 @@ Access features through VS Code Command Palette (Ctrl+Shift+P):
 - `Gradle Migrator: Register LM Tool`
 - `Gradle Migrator: Analyze Project`
 
+### 🎯 Effective Usage Scenarios
+
+#### Complete Project Migration
+**When to use**: Migrating entire project to modern Gradle practices
+
+**Recommended approach**:
+1. Start with `@gradle-migrator analyzeProject` to understand current state
+2. Use `@gradle-migrator migrateRepo` for comprehensive migration
+3. Review changes before committing
+
+**Example prompt for AI analysis**:
+```
+Analyze this Gradle project for migration to Gradle 8.x:
+- Update deprecated plugins and syntax
+- Modernize dependency declarations
+- Implement version catalogs
+- Optimize build performance
+- Ensure security best practices
+```
+
+#### Security-Focused Migration
+**When to use**: Addressing security vulnerabilities in dependencies
+
+**Recommended approach**:
+1. Focus on dependency updates and repository security
+2. Use targeted migration with security emphasis
+
+**Example prompt**:
+```
+Perform security-focused Gradle migration:
+- Identify vulnerable dependencies with CVE details
+- Update to latest secure versions
+- Fix insecure repository URLs (HTTP vs HTTPS)
+- Remove hardcoded credentials
+```
+
+#### Performance Optimization
+**When to use**: Improving build performance
+
+**Example prompt**:
+```
+Optimize Gradle build performance:
+- Enable parallel execution and build cache
+- Implement configuration cache
+- Optimize JVM settings for Gradle daemon
+- Resolve dependency conflicts
+- Suggest modern plugin alternatives
+```
+
+#### Legacy Project Modernization
+**When to use**: Upgrading from very old Gradle versions
+
+**Example prompt**:
+```
+Modernize legacy Gradle project from version 4.x to 8.x:
+- Update wrapper configuration
+- Migrate deprecated APIs and plugins
+- Handle breaking changes in dependency resolution
+- Update build script syntax for compatibility
+- Ensure all plugins support target version
+```
+
+### 💡 Best Practices for Effective Usage
+
+#### Before Migration
+- ✅ **Backup your project**: Always commit changes to version control
+- ✅ **Test current build**: Run `./gradlew build` to ensure project builds successfully
+- ✅ **Review dependencies**: Note any custom or internal dependencies
+- ✅ **Check test coverage**: Ensure adequate tests to verify functionality
+
+#### During Migration
+- ✅ **Review AI suggestions**: Don't blindly accept all recommendations
+- ✅ **Apply incrementally**: Make changes in small batches and test
+- ✅ **Understand changes**: Read explanations for each modification
+- ✅ **Use interactive mode**: Leverage the extension's approval workflow
+
+#### After Migration
+- ✅ **Verify build**: Run `./gradlew clean build` to ensure everything works
+- ✅ **Execute tests**: Run your test suite to verify functionality
+- ✅ **Performance check**: Compare build times before and after
+- ✅ **Update documentation**: Reflect changes in project docs
+
+#### Effective AI Prompts
+
+**General Migration Template**:
+```
+Analyze this Gradle build script and provide comprehensive migration recommendations:
+
+1. **Modernization**: Update to latest Gradle practices and syntax
+2. **Dependencies**: Suggest latest stable versions and identify conflicts
+3. **Performance**: Recommend build optimization strategies
+4. **Security**: Identify vulnerabilities and insecure configurations
+5. **Best Practices**: Ensure adherence to current Gradle conventions
+
+Target Gradle version: 8.5
+Project type: [Java/Kotlin/Android/Multi-module]
+Priority: [Performance/Security/Modernization]
+```
+
+**Dependency-Focused Template**:
+```
+Focus on dependency management for this Gradle project:
+- Update all dependencies to latest stable versions
+- Identify and resolve version conflicts
+- Suggest implementation of Gradle Version Catalogs
+- Check for deprecated or unmaintained libraries
+- Recommend modern alternatives for legacy dependencies
+- Ensure proper dependency scopes (implementation vs api)
+```
+
+**Plugin Migration Template**:
+```
+Analyze and modernize Gradle plugins in this project:
+- Update all plugins to latest versions
+- Migrate from legacy plugin application syntax
+- Replace deprecated plugins with modern alternatives
+- Ensure plugin compatibility with target Gradle version
+- Optimize plugin configuration and performance
+```
+
 ## 📚 Documentation
 
+- **[User Guide](docs/USER_GUIDE.md)** - Comprehensive usage instructions and examples
 - **[Agent Mode Usage Guide](docs/AGENT_MODE_USAGE_GUIDE.md)** - Complete guide for autonomous migration
 - **[Tool Registration Analysis](docs/TOOL_REGISTRATION_ANALYSIS.md)** - Technical details about tool registration
 - **[Extension Development Host Guide](docs/EXTENSION_DEVELOPMENT_HOST_GUIDE.md)** - Development and testing guide

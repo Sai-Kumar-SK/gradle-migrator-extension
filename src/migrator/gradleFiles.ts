@@ -6,11 +6,19 @@ import { Worker } from 'worker_threads';
 import { createReadStream, createWriteStream } from 'fs';
 import { pipeline } from 'stream/promises';
 import { Transform } from 'stream';
-import { handleError, ErrorType, withErrorHandling } from '../utils/errorHandler';
+import { handleError, ErrorType } from '../utils/errorHandler';
 import { feedback } from '../utils/userFeedback';
 import { GradleWorkerPool } from '../workers/gradleProcessor.worker';
 import { MemoryManager, globalMemoryManager } from '../utils/memoryManager';
 import { SETTINGS_GRADLE_TEMPLATE, JENKINSFILE_TEMPLATE } from './templates';
+import { AIService } from '../services/aiService';
+import { GradleParser } from '../services/gradleParser';
+import { AnalysisEngine } from '../services/analysisEngine';
+import { ContextSuggestionEngine } from '../services/contextSuggestionEngine';
+import { InteractiveWorkflow } from '../services/interactiveWorkflow';
+import { SecurityAnalyzer } from '../services/securityAnalyzer';
+import { ErrorHandler, withErrorHandling } from '../services/errorHandler';
+import { UserPreferenceEngine } from '../services/userPreferenceEngine';
 
 export interface GradleFileInfo {
   relativePath: string;
@@ -40,6 +48,40 @@ export interface ProcessingResult {
   cacheHits?: number;
   memoryUsage?: NodeJS.MemoryUsage;
   parallelJobs?: number;
+  aiSuggestions?: AISuggestion[];
+  analysisResults?: AnalysisResult[];
+  userAcceptedSuggestions?: number;
+  userRejectedSuggestions?: number;
+}
+
+export interface AISuggestion {
+  id: string;
+  filePath: string;
+  type: 'dependency' | 'plugin' | 'configuration' | 'performance' | 'security';
+  description: string;
+  currentCode: string;
+  suggestedCode: string;
+  reasoning: string;
+  confidence: number;
+  impact: 'low' | 'medium' | 'high';
+  accepted?: boolean;
+}
+
+export interface AnalysisResult {
+  filePath: string;
+  issues: Issue[];
+  suggestions: string[];
+  modernizationOpportunities: string[];
+  securityConcerns: string[];
+  performanceImprovements: string[];
+}
+
+export interface Issue {
+  type: 'deprecated' | 'security' | 'performance' | 'compatibility';
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  description: string;
+  line?: number;
+  suggestion?: string;
 }
 
 export interface PerformanceOptions {
@@ -158,7 +200,8 @@ export async function updateGradlePropertiesFiles(
     message: '',
     filesProcessed: 0,
     errors: [],
-    warnings: []
+    warnings: [],
+    backupPaths: []
   };
   
   try {
@@ -167,7 +210,10 @@ export async function updateGradlePropertiesFiles(
         cwd: repoPath, 
         nodir: true, 
         ignore: ['**/.git/**', '**/node_modules/**', '**/build/**'] 
-      }, (err, matches) => err ? rej(err) : res(matches));
+      }, (err, matches) => {
+
+        err ? rej(err) : res(matches);
+      });
     });
     
     if (files.length === 0) {
@@ -194,18 +240,20 @@ export async function updateGradlePropertiesFiles(
         
         // Create backup if requested
         if (options?.createBackup && !options?.dryRun) {
-          await fs.writeFile(`${abs}.backup`, text, 'utf8');
+          const backupPath = `${abs}.backup`;
+          await fs.writeFile(backupPath, text, 'utf8');
+          result.backupPaths!.push(backupPath);
         }
         
-        // Update gradleRepositoryUrl with more robust regex
+        // Update all URLs containing the target domain with more robust regex
         const urlPattern = new RegExp(
-          `(gradleRepositoryUrl\\s*=\\s*)(https?:\\/\\/)([^\\s\\/]*${fromDomain.replace(/\./g, '\\.')}[^\\s\\/]*)(\\/.*)`,
+          `(\\w+[\\w\\.]*\\s*=\\s*)(https?:\\/\\/)([^\\s]*${fromDomain.replace(/\./g, '\\.')}[^\\s]*)(\\s|$|\\n)`,
           'gmi'
         );
         
-        const updated = text.replace(urlPattern, (match, prefix, protocol, domain, path) => {
-          const newDomain = domain.replace(new RegExp(fromDomain.replace(/\./g, '\\.'), 'gi'), toDomain);
-          return `${prefix}${protocol}${newDomain}${path}`;
+        const updated = text.replace(urlPattern, (match, prefix, protocol, domainAndPath, ending) => {
+          const newDomainAndPath = domainAndPath.replace(new RegExp(fromDomain.replace(/\./g, '\\.'), 'gi'), toDomain);
+          return `${prefix}${protocol}${newDomainAndPath}${ending || ''}`;
         });
         
         if (updated !== text) {
@@ -398,7 +446,11 @@ export async function processGradleFilesWithCopilot(
     backupPaths: [],
     cacheHits: 0,
     memoryUsage: initialMemory,
-    parallelJobs: perfOptions.maxParallelJobs
+    parallelJobs: perfOptions.maxParallelJobs,
+    aiSuggestions: [],
+    analysisResults: [],
+    userAcceptedSuggestions: 0,
+    userRejectedSuggestions: 0
   };
 
   const stats: ProcessingStats = {
@@ -411,6 +463,28 @@ export async function processGradleFilesWithCopilot(
     totalProcessingTime: 0,
     memoryPeak: 0
   };
+
+  // Initialize AI services with error handling
+  const errorHandler = ErrorHandler.getInstance();
+  const userPreferenceEngine = UserPreferenceEngine.getInstance();
+  
+  const aiService = AIService.getInstance();
+  const gradleParser = new GradleParser();
+  const analysisEngine = new AnalysisEngine();
+  const contextEngine = new ContextSuggestionEngine();
+  const interactiveWorkflow = new InteractiveWorkflow();
+  const securityAnalyzer = new SecurityAnalyzer();
+  
+  try {
+    await aiService.initialize();
+    
+    // Set up cross-service dependencies
+    userPreferenceEngine.setAIService(aiService);
+    
+    progressCallback?.(5, 'AI services initialized');
+  } catch (error: any) {
+    result.warnings.push(`AI services unavailable: ${error.message}. Falling back to basic processing.`);
+  }
 
   try {
     const gradleFiles = await findGradleFiles(repositoryPath);
@@ -479,48 +553,13 @@ export async function processGradleFilesWithCopilot(
         // Adjust parallelism based on current memory usage
         dynamicParallelJobs = memoryManager.getRecommendedParallelJobs(perfOptions.maxParallelJobs!);
         
-        // Process chunk in parallel
+        // Process chunk in parallel with AI analysis
         const chunkPromises = chunk.map(async (file) => {
           return await withErrorHandling(async () => {
             const fileStats = await fs.stat(file.absolutePath);
             const backupPath = path.join(backupDir, file.relativePath);
             
-            // Use worker threads for CPU-intensive operations if enabled
-            if (workerPool && fileStats.size > 50 * 1024) { // 50KB threshold
-              const workerResult = await workerPool.executeTask({
-                type: 'PROCESS_FILE',
-                filePath: file.absolutePath,
-                urlMappings
-              });
-              
-              if (!workerResult.success) {
-                throw new Error(workerResult.error || 'Worker processing failed');
-              }
-              
-              // Create backup
-              await fs.ensureDir(path.dirname(backupPath));
-              await fs.copy(file.absolutePath, backupPath);
-              backupPaths.push(backupPath);
-              
-              // Write modified content
-              if (workerResult.modifiedContent) {
-                await fs.writeFile(file.absolutePath, workerResult.modifiedContent, 'utf8');
-              }
-              
-              stats.processedFiles++;
-              
-              return {
-                filePath: file.absolutePath,
-                relativePath: file.relativePath,
-                backupPath,
-                cacheHit: false,
-                fileSize: fileStats.size,
-                workerProcessed: true
-              };
-            }
-            
-            // Fallback to main thread processing
-            // Check cache first if enabled
+            // Read file content
             let content: string;
             let cacheHit = false;
             
@@ -541,31 +580,212 @@ export async function processGradleFilesWithCopilot(
             // Track file size for statistics
             stats.averageFileSize = (stats.averageFileSize * stats.processedFiles + fileStats.size) / (stats.processedFiles + 1);
             
-            // Create backup directory structure
+            // Create backup directory structure and backup
             await fs.ensureDir(path.dirname(backupPath));
-            
-            // Create backup
             await fs.copy(file.absolutePath, backupPath);
             backupPaths.push(backupPath);
             
             let modifiedContent = content;
+            let aiSuggestions: AISuggestion[] = [];
+            let analysisResult: AnalysisResult | null = null;
             
-            // Use streaming for large files if enabled
-            if (perfOptions.useStreaming && fileStats.size > 1024 * 1024) { // 1MB threshold
-              const tempPath = file.absolutePath + '.tmp';
-              await streamProcessor.processFileStream(file.absolutePath, tempPath);
-              await fs.move(tempPath, file.absolutePath);
-            } else {
-              // Apply URL mappings in memory
+            // Comprehensive AI-powered analysis and suggestions
+            if (aiService && (file.type === 'build' || file.type === 'settings')) {
+              try {
+                // 1. Parse Gradle file for basic analysis with error handling
+                 const parseResult = await withErrorHandling(
+                   () => GradleParser.parseGradleBuild(file.absolutePath),
+                   { operation: 'gradle-parsing', file: file.absolutePath, service: 'GradleParser', timestamp: new Date() },
+                   () => errorHandler.handleGradleParsingError(new Error('Parsing failed'), file.absolutePath, content)
+                 );
+                
+                // 2. Run comprehensive analysis engine with error handling
+                 const comprehensiveAnalysis = await withErrorHandling(
+                   () => analysisEngine.analyzeProject(path.dirname(file.absolutePath)),
+                   { operation: 'analysis-engine', file: path.dirname(file.absolutePath), service: 'AnalysisEngine', timestamp: new Date() },
+                   () => errorHandler.handleAnalysisEngineError(new Error('Analysis failed'), path.dirname(file.absolutePath))
+                 );
+                
+                // 3. Generate contextual suggestions with error handling
+                 const projectContext = await contextEngine.analyzeProjectContext(path.dirname(file.absolutePath));
+                 const baseSuggestions = await withErrorHandling(
+                   () => contextEngine.generateContextualSuggestions(
+                     path.dirname(file.absolutePath)
+                   ),
+                   { operation: 'context-suggestions', file: path.dirname(file.absolutePath), service: 'ContextSuggestionEngine', timestamp: new Date() },
+                   () => errorHandler.handleContextSuggestionError(new Error('Context analysis failed'), path.dirname(file.absolutePath))
+                 );
+                
+                // 3.5. Personalize suggestions based on user preferences
+                const contextualSuggestions = await userPreferenceEngine.getPersonalizedSuggestions(baseSuggestions, projectContext);
+                
+                // 4. Run security analysis with error handling
+                 const securityReport = await withErrorHandling(
+                   () => securityAnalyzer.scanProject(path.dirname(file.absolutePath)),
+                   { operation: 'security-analysis', file: path.dirname(file.absolutePath), service: 'SecurityAnalyzer', timestamp: new Date() },
+                   () => errorHandler.handleSecurityAnalysisError(new Error('Security analysis failed'), path.dirname(file.absolutePath))
+                 );
+                
+                // 5. Start interactive workflow for user decisions with error handling
+                 const workflowSession = await withErrorHandling(
+                   () => interactiveWorkflow.startInteractiveSession(
+                     path.dirname(file.absolutePath)
+                   ),
+                   { operation: 'interactive-workflow', file: path.dirname(file.absolutePath), service: 'InteractiveWorkflow', timestamp: new Date() },
+                   () => errorHandler.handleInteractiveWorkflowError(new Error('Interactive workflow failed'), path.dirname(file.absolutePath))
+                 );
+                
+                // 6. Process suggestions through interactive workflow
+                const userDecisions = await interactiveWorkflow.processAllSuggestions();
+                
+                // 6.5. Record user decisions for learning
+                for (const decision of Array.from(userDecisions.values())) {
+                  const suggestion = contextualSuggestions.find(s => s.id === decision.suggestionId);
+                  if (suggestion) {
+                    // Map action values to match UserDecision interface
+                    const mappedAction = decision.action === 'accept' ? 'accepted' : 
+                                       decision.action === 'reject' ? 'rejected' : 
+                                       decision.action === 'modify' ? 'modified' : 'rejected';
+                    
+                    await userPreferenceEngine.recordUserDecision({
+                      suggestionId: decision.suggestionId,
+                      suggestionType: suggestion.category,
+                      category: suggestion.category,
+                      action: mappedAction,
+                      timestamp: new Date(),
+                      projectContext: {
+                        type: projectContext.type,
+                        size: projectContext.dependencies.length > 20 ? 'large' : 'small',
+                        technologies: projectContext.dependencies.slice(0, 5).map(dep => `${dep.group}:${dep.artifact}:${dep.version}`)
+                      }
+                    });
+                  }
+                }
+                
+                // 7. Generate AI recommendations with comprehensive context and error handling
+                const analysisRequest = {
+                  filePath: file.absolutePath,
+                  content,
+                  analysisType: 'gradle-migration' as const,
+                  context: {
+                    projectStructure: await getProjectStructure(repositoryPath),
+                    existingDependencies: parseResult.dependencies?.map((d: any) => `${d.group}:${d.name}:${d.version}`) || [],
+                    targetGradleVersion: parseResult.gradleVersion
+                  }
+                };
+                
+                const aiAnalysis = await withErrorHandling(
+                   () => aiService.analyzeGradleBuild(analysisRequest),
+                   { operation: 'ai-analysis', file: file.absolutePath, service: 'AIService', timestamp: new Date() },
+                   () => Promise.resolve({ suggestions: [], summary: 'AI service unavailable - using fallback analysis', confidence: 0.1, reasoning: 'Fallback analysis due to AI service unavailability' })
+                 );
+                
+                // 8. Convert AI analysis to suggestions
+                aiSuggestions = aiAnalysis?.suggestions.map((suggestion, index) => ({
+                  id: `${file.relativePath}-${index}`,
+                  filePath: file.absolutePath,
+                  type: suggestion.type as AISuggestion['type'],
+                  description: suggestion.description,
+                  currentCode: suggestion.changes[0]?.originalContent || '',
+                  suggestedCode: suggestion.changes[0]?.suggestedContent || '',
+                  reasoning: suggestion.reasoning,
+                  confidence: suggestion.confidence,
+                  impact: suggestion.impact as AISuggestion['impact']
+                })) || [];
+                
+                // 9. Apply approved changes from interactive workflow
+                const acceptedDecisions = Array.from(userDecisions.values())
+                  .filter(d => d.action === 'accept');
+                
+                for (const decision of acceptedDecisions) {
+                  const suggestion = contextualSuggestions.find(s => s.id === decision.suggestionId);
+                  if (suggestion && suggestion.implementation.codeChanges.length > 0) {
+                    // Apply code changes from the suggestion
+                    for (const change of suggestion.implementation.codeChanges) {
+                      if (change.before && change.after) {
+                        modifiedContent = modifiedContent.replace(change.before, change.after);
+                      } else if (change.after) {
+                        modifiedContent += '\n' + change.after;
+                      }
+                    }
+                  }
+                }
+                
+                // 10. Present AI suggestions to user for additional approval
+                if (aiSuggestions.length > 0) {
+                  const userChoices = await presentSuggestionsToUser(aiSuggestions);
+                  
+                  // Apply approved AI suggestions
+                  for (const suggestion of aiSuggestions) {
+                    const userChoice = userChoices.find(c => c.id === suggestion.id);
+                    if (userChoice?.accepted) {
+                      modifiedContent = modifiedContent.replace(
+                        suggestion.currentCode,
+                        suggestion.suggestedCode
+                      );
+                      suggestion.accepted = true;
+                      result.userAcceptedSuggestions!++;
+                    } else {
+                      suggestion.accepted = false;
+                      result.userRejectedSuggestions!++;
+                    }
+                  }
+                }
+                
+                // 11. Complete interactive session
+                await interactiveWorkflow.completeSession();
+                
+                // 12. Build comprehensive analysis result
+                analysisResult = {
+                  filePath: file.absolutePath,
+                  issues: [
+                    ...parseResult.issues,
+                    ...securityReport.vulnerabilities.map((v: any) => ({
+                      type: 'security' as const,
+                      severity: v.severity as Issue['severity'],
+                      description: v.description,
+                      suggestion: v.recommendation
+                    }))
+                  ],
+                  suggestions: [
+                    ...parseResult.suggestions,
+                    ...contextualSuggestions.map(cs => cs.description)
+                  ],
+                  modernizationOpportunities: [
+                    ...parseResult.modernizationOpportunities,
+                    ...comprehensiveAnalysis.prioritizedRecommendations.map((r: any) => r.description)
+                  ],
+                  securityConcerns: securityReport.vulnerabilities.map((v: any) => v.description),
+                  performanceImprovements: [
+                    ...(parseResult.performanceImprovements || []),
+                    ...(comprehensiveAnalysis.performanceAnalysis?.recommendations || [])
+                  ]
+                };
+                
+              } catch (aiError: any) {
+                result.warnings.push(`AI analysis failed for ${file.relativePath}: ${aiError.message}`);
+              }
+            }
+            
+            // Fallback to basic URL mappings if AI is not available or for non-build files
+            if (!aiService.isReady() || file.type === 'properties' || file.type === 'wrapper') {
               for (const [oldUrl, newUrl] of urlMappings) {
                 const regex = new RegExp(oldUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
                 modifiedContent = modifiedContent.replace(regex, newUrl);
               }
-              
-              // Write modified content if changes were made
-              if (modifiedContent !== content) {
-                await fs.writeFile(file.absolutePath, modifiedContent, 'utf8');
-              }
+            }
+            
+            // Write modified content if changes were made
+            if (modifiedContent !== content) {
+              await fs.writeFile(file.absolutePath, modifiedContent, 'utf8');
+            }
+            
+            // Store AI results
+            if (aiSuggestions.length > 0) {
+              result.aiSuggestions!.push(...aiSuggestions);
+            }
+            if (analysisResult) {
+              result.analysisResults!.push(analysisResult);
             }
             
             stats.processedFiles++;
@@ -576,9 +796,15 @@ export async function processGradleFilesWithCopilot(
               backupPath,
               cacheHit,
               fileSize: fileStats.size,
-              workerProcessed: false
+              aiProcessed: aiService !== null && (file.type === 'build' || file.type === 'settings'),
+              suggestionsCount: aiSuggestions.length
             };
-          }, ErrorType.GRADLE_PROCESSING, { filePath: file.absolutePath, operation: 'process_gradle_file' });
+          }, {
+            operation: 'process_gradle_file_with_ai',
+            file: file.absolutePath,
+            service: 'GradleFileProcessor',
+            timestamp: new Date()
+          });
         });
         
         // Wait for chunk to complete with dynamic concurrency limit
@@ -588,12 +814,12 @@ export async function processGradleFilesWithCopilot(
         
         // Process results
         for (const chunkResult of chunkResults) {
-          if (chunkResult.status === 'fulfilled' && chunkResult.value.success) {
+          if (chunkResult.status === 'fulfilled' && chunkResult.value) {
             processedCount++;
           } else {
             const error = chunkResult.status === 'rejected' 
               ? chunkResult.reason 
-              : chunkResult.value.error;
+              : 'Unknown error';
             errors.push(error);
             stats.errorFiles++;
           }
@@ -644,12 +870,21 @@ export async function processGradleFilesWithCopilot(
     
     result.warnings.push(`Performance: ${stats.totalProcessingTime}ms total, ${Math.round(stats.averageFileSize / 1024)}KB avg file size, ${Math.round(stats.memoryPeak / 1024 / 1024)}MB peak memory`);
 
+    // Generate comprehensive result message
+    const aiSummary = result.aiSuggestions!.length > 0 
+      ? ` AI generated ${result.aiSuggestions!.length} suggestions (${result.userAcceptedSuggestions} accepted, ${result.userRejectedSuggestions} rejected).`
+      : '';
+    
+    const analysisSummary = result.analysisResults!.length > 0
+      ? ` Analysis found ${result.analysisResults!.reduce((sum, r) => sum + r.issues.length, 0)} issues across ${result.analysisResults!.length} files.`
+      : '';
+    
     if (result.success) {
-      result.message = `Successfully processed ${stats.processedFiles} Gradle files.`;
+      result.message = `Successfully processed ${stats.processedFiles} Gradle files with AI-powered analysis.${aiSummary}${analysisSummary}`;
     } else if (result.partialSuccess) {
-      result.message = `Partially successful: ${stats.processedFiles} files processed, ${errors.length} errors.`;
+      result.message = `Partially successful: ${stats.processedFiles} files processed, ${errors.length} errors.${aiSummary}${analysisSummary}`;
     } else {
-      result.message = `Failed to process Gradle files: ${errors.length} errors occurred.`;
+      result.message = `Failed to process Gradle files: ${errors.length} errors occurred.${aiSummary}${analysisSummary}`;
     }
 
     progressCallback?.(100, 'Processing complete');
@@ -809,6 +1044,80 @@ class StreamingFileProcessor {
 
 // Global cache instance
 const globalFileCache = new GradleFileCache();
+
+// Helper function to get project structure for AI analysis
+async function getProjectStructure(repositoryPath: string): Promise<string[]> {
+  try {
+    const structure: string[] = [];
+    const files = await fs.readdir(repositoryPath, { withFileTypes: true });
+    
+    for (const file of files) {
+      if (file.isDirectory() && !file.name.startsWith('.') && file.name !== 'node_modules') {
+        structure.push(`${file.name}/`);
+        // Get one level deep for context
+        try {
+          const subFiles = await fs.readdir(path.join(repositoryPath, file.name));
+          structure.push(...subFiles.slice(0, 5).map(f => `${file.name}/${f}`));
+        } catch {
+          // Ignore errors reading subdirectories
+        }
+      } else if (file.isFile()) {
+        structure.push(file.name);
+      }
+    }
+    
+    return structure.slice(0, 50); // Limit to 50 items for context
+  } catch (error) {
+    return [];
+  }
+}
+
+// Helper function to present AI suggestions to user for approval
+async function presentSuggestionsToUser(suggestions: AISuggestion[]): Promise<Array<{ id: string; accepted: boolean }>> {
+  const choices: Array<{ id: string; accepted: boolean }> = [];
+  
+  for (const suggestion of suggestions) {
+    try {
+      // Create a detailed message for the user
+      const message = `AI Suggestion for ${path.basename(suggestion.filePath)}:\n\n` +
+        `${suggestion.description}\n\n` +
+        `Current code:\n${suggestion.currentCode}\n\n` +
+        `Suggested code:\n${suggestion.suggestedCode}\n\n` +
+        `Reasoning: ${suggestion.reasoning}\n` +
+        `Confidence: ${Math.round(suggestion.confidence * 100)}%\n` +
+        `Impact: ${suggestion.impact}`;
+      
+      const userChoice = await vscode.window.showInformationMessage(
+        message,
+        { modal: true },
+        'Accept',
+        'Reject',
+        'Skip All'
+      );
+      
+      if (userChoice === 'Accept') {
+        choices.push({ id: suggestion.id, accepted: true });
+      } else if (userChoice === 'Reject') {
+        choices.push({ id: suggestion.id, accepted: false });
+      } else if (userChoice === 'Skip All') {
+        // Reject all remaining suggestions
+        choices.push({ id: suggestion.id, accepted: false });
+        for (let i = suggestions.indexOf(suggestion) + 1; i < suggestions.length; i++) {
+          choices.push({ id: suggestions[i].id, accepted: false });
+        }
+        break;
+      } else {
+        // User cancelled or closed dialog - reject this suggestion
+        choices.push({ id: suggestion.id, accepted: false });
+      }
+    } catch (error) {
+      // If there's an error showing the dialog, reject the suggestion
+      choices.push({ id: suggestion.id, accepted: false });
+    }
+  }
+  
+  return choices;
+}
 
 /**
  * Validate Gradle file syntax and structure

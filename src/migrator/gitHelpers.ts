@@ -94,6 +94,15 @@ export async function createBranch(git: SimpleGit, branchName: string, fromBranc
       throw new Error('Branch name cannot be empty');
     }
     
+    // Check for invalid characters and patterns
+    if (branchName.includes('..') || branchName.includes(' ') || 
+        branchName.startsWith('-') || branchName.endsWith('.') ||
+        branchName.includes('~') || branchName.includes('^') ||
+        branchName.includes(':') || branchName.includes('?') ||
+        branchName.includes('*') || branchName.includes('[')) {
+      throw new Error(`Invalid branch name: ${branchName}`);
+    }
+    
     // Check if branch already exists
     const branches = await git.branch();
     const branchExists = branches.all.includes(branchName);
@@ -136,6 +145,11 @@ export async function addAllAndCommit(git: SimpleGit, message: string, options?:
   author?: { name: string; email: string };
 }): Promise<GitOperationResult> {
   try {
+    // Validate commit message
+    if (!message || message.trim() === '') {
+      throw new Error('Commit message cannot be empty');
+    }
+    
     // Check for uncommitted changes
     const status = await git.status();
     

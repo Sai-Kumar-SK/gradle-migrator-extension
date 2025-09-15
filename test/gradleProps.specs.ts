@@ -19,8 +19,10 @@ describe('updateGradlePropertiesFiles', () => {
     ].join('\n');
     await fs.writeFile(file, content, 'utf8');
 
-    const changes = await updateGradlePropertiesFiles(tmp);
-    expect(changes).to.include('gradle.properties');
+    const result = await updateGradlePropertiesFiles(tmp);
+    expect(result.success).to.be.true;
+    expect(result.filesProcessed).to.equal(1);
+    expect(result.warnings.join(',')).to.include('gradle.properties');
 
     const updated = (await fs.readFile(file, 'utf8')).trim();
     expect(updated).to.contain('https://efg.org.com/gradle/gradle-7.6-all.zip');
@@ -29,8 +31,8 @@ describe('updateGradlePropertiesFiles', () => {
 
   it('does nothing if domain not present', async () => {
     await fs.writeFile(file, 'gradleRepositoryUrl=https://other.com/gradle.zip', 'utf8');
-    const changes = await updateGradlePropertiesFiles(tmp);
-    expect(changes).to.be.empty;
+    const result = await updateGradlePropertiesFiles(tmp);
+    expect(result.filesProcessed).to.equal(0);
     const after = (await fs.readFile(file, 'utf8')).trim();
     expect(after).to.contain('other.com');
   });

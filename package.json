@@ -38,9 +38,9 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -w -p ./",
-    "test": "mocha -r ts-node/register --project tsconfig.test.json test/**/*.spec.ts --timeout 5000",
-    "test:unit": "mocha -r ts-node/register --project tsconfig.test.json test/unit/**/*.spec.ts --timeout 5000",
-    "test:integration": "mocha -r ts-node/register --project tsconfig.test.json test/integration/**/*.spec.ts --timeout 10000",
+    "test": "mocha -r ts-node/register -r test/setup.js src/test/suite/**/*.test.ts --timeout 10000",
+    "test:unit": "mocha -r ts-node/register --project tsconfig.test.json src/test/suite/**/*.test.ts --grep 'Unit Tests' --timeout 5000",
+    "test:integration": "mocha -r ts-node/register --project tsconfig.test.json src/test/suite/**/*.test.ts --grep 'Integration Tests' --timeout 15000",
     "lint": "eslint ./src --ext .ts",
     "lint:fix": "eslint ./src --ext .ts --fix",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
@@ -156,22 +156,17 @@
       {
         "name": "gradle-migrator",
         "displayName": "Gradle Migrator",
-        "modelDescription": "Enumerate Gradle files, stream file chunks, accept suggested edits and commit changes to Gradle projects.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "gradle-migrator",
+        "icon": "$(gear)",
+        "userDescription": "Migrate Gradle projects, analyze build files, and perform automated migrations with Copilot integration",
+        "modelDescription": "A tool for migrating Gradle projects. It can list files, update files, commit changes, and perform full repository migrations with authentication support. Use this tool to analyze Gradle build files, suggest improvements, and automatically apply migration changes.",
         "inputSchema": {
           "type": "object",
           "properties": {
             "action": {
               "type": "string",
-              "enum": [
-                "listFiles",
-                "readChunk",
-                "updateFiles",
-                "commitChanges",
-                "processWithCopilot",
-                "validateFiles",
-                "getRepoStatus",
-                "analyzeProject"
-              ],
+              "enum": ["listFiles", "updateFiles", "commitChanges", "migrateRepo"],
               "description": "The action to perform"
             },
             "params": {
@@ -187,53 +182,28 @@
                 },
                 "repositoryUrl": {
                   "type": "string",
-                  "description": "New repository URL for migration"
+                  "description": "URL of the repository to clone"
                 },
-                "startLine": {
-                  "type": "number",
-                  "description": "Starting line number for file chunk reading"
-                },
-                "endLine": {
-                  "type": "number",
-                  "description": "Ending line number for file chunk reading"
-                },
-                "maxTokens": {
-                  "type": "number",
-                  "description": "Maximum tokens per file for processing"
-                },
-                "batchSize": {
-                  "type": "number",
-                  "description": "Number of files to process in each batch"
-                },
-                "createBackup": {
-                  "type": "boolean",
-                  "description": "Whether to create backup files before modification"
-                },
-                "dryRun": {
-                  "type": "boolean",
-                  "description": "Whether to perform a dry run without actual changes"
-                },
-                "message": {
+                "gitUrl": {
                   "type": "string",
-                  "description": "Commit message for changes"
+                  "description": "Git repository URL for migration"
                 },
-                "push": {
-                  "type": "boolean",
-                  "description": "Whether to push changes after commit"
+                "branchName": {
+                  "type": "string",
+                  "description": "Branch name for migration"
                 },
-                "fileTypes": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  },
-                  "description": "File types to validate or process"
+                "commitMessage": {
+                  "type": "string",
+                  "description": "Commit message for migration"
+                },
+                "auth": {
+                  "type": "object",
+                  "description": "Authentication credentials for private repositories"
                 }
               }
             }
           },
-          "required": [
-            "action"
-          ]
+          "required": ["action"]
         }
       }
     ]
